@@ -1,0 +1,139 @@
+************************************************************************************************
+1.Acquire the top 200,000 posts by viewcount (see notes on Data Acquisition)
+
+  -SELECT top 50000 * FROM posts WHERE posts.ViewCount < 100000000 ORDER BY posts.ViewCount DESC;
+  -SELECT top 50000 * FROM posts WHERE posts.ViewCount <= 96538 and posts.Id <> 1463670 ORDER BY posts.ViewCount DESC;
+  -SELECT top 50000 * FROM posts WHERE posts.ViewCount <= 56799 and posts.Id <> 1684628 ORDER BY posts.ViewCount DESC;
+  -SELECT top 50000 * FROM posts WHERE posts.ViewCount <= 40673 and posts.Id <> 13899407 and posts.Id <> 7271005  and posts.Id <> 10312696 ORDER BY posts.ViewCount DESC;
+
+************************************************************************************************
+
+2.Using Pig or MapReduce, extract, transform and load the data as applicable
+
+#extract
+F1 = LOAD '/pig/File1.csv' USING org.apache.pig.piggybank.storage.CSVExcelStorage(',', 'YES_MULTILINE','NOCHANGE','SKIP_INPUT_HEADER') AS (Id:int, PostTypeId
+:int,  AcceptedAnswerId:int, ParentId:int, CreationDate:chararray, DeletionDate:chararray, Score:int, ViewCount:int, Body:chararray, OwnerUserId:int, OwnerDisplayNa
+me:chararray, LastEditorUserId:int, LastEditorDisplayName:chararray, LastEditDate:chararray, LastActivityDate:chararray, Title:chararray, Tags:chararray, AnswerCoun
+t:int, CommentCount:int, FavoriteCount:int, ClosedDate:chararray, CommunityOwnedDate:chararray);
+
+F2 = LOAD '/pig/File2.csv' USING org.apache.pig.piggybank.storage.CSVExcelStorage(',', 'YES_MULTILINE','NOCHANGE','SKIP_INPUT_HEADER') AS (Id:int, PostTypeId
+:int,  AcceptedAnswerId:int, ParentId:int, CreationDate:chararray, DeletionDate:chararray, Score:int, ViewCount:int, Body:chararray, OwnerUserId:int, OwnerDisplayNa
+me:chararray, LastEditorUserId:int, LastEditorDisplayName:chararray, LastEditDate:chararray, LastActivityDate:chararray, Title:chararray, Tags:chararray, AnswerCoun
+t:int, CommentCount:int, FavoriteCount:int, ClosedDate:chararray, CommunityOwnedDate:chararray);
+
+F3 = LOAD '/pig/File3.csv' USING org.apache.pig.piggybank.storage.CSVExcelStorage(',', 'YES_MULTILINE','NOCHANGE','SKIP_INPUT_HEADER') AS (Id:int, PostTypeId
+:int,  AcceptedAnswerId:int, ParentId:int, CreationDate:chararray, DeletionDate:chararray, Score:int, ViewCount:int, Body:chararray, OwnerUserId:int, OwnerDisplayNa
+me:chararray, LastEditorUserId:int, LastEditorDisplayName:chararray, LastEditDate:chararray, LastActivityDate:chararray, Title:chararray, Tags:chararray, AnswerCoun
+t:int, CommentCount:int, FavoriteCount:int, ClosedDate:chararray, CommunityOwnedDate:chararray);
+
+F4 = LOAD '/pig/File4.csv' USING org.apache.pig.piggybank.storage.CSVExcelStorage(',', 'YES_MULTILINE','NOCHANGE','SKIP_INPUT_HEADER') AS (Id:int, PostTypeId
+:int,  AcceptedAnswerId:int, ParentId:int, CreationDate:chararray, DeletionDate:chararray, Score:int, ViewCount:int, Body:chararray, OwnerUserId:int, OwnerDisplayNa
+me:chararray, LastEditorUserId:int, LastEditorDisplayName:chararray, LastEditDate:chararray, LastActivityDate:chararray, Title:chararray, Tags:chararray, AnswerCoun
+t:int, CommentCount:int, FavoriteCount:int, ClosedDate:chararray, CommunityOwnedDate:chararray);
+
+Main = Union F1, F2, F3, F4 ;
+
+#remove comma
+Main1 = FOREACH Main GENERATE  Id AS Id, Score AS Score, REPLACE(Body,',*','') AS Body, OwnerUserId AS OwnerUserId, REPLACE(Title,',*','') AS Title, REPLACE(Tags,',*','') AS Tags;
+
+#remove \n
+Main2 = FOREACH Main1 GENERATE  Id AS Id, Score AS Score, REPLACE(Body,'\n*','') AS Body, OwnerUserId AS OwnerUserId, REPLACE(Title,'\n*','') AS Title, REPLACE(Tags,'\n*','') AS Tags;
+
+#remove <.*?>
+Main3 = FOREACH Main2 GENERATE  Id AS Id, Score AS Score, REPLACE(Body,'<.*?>','') AS Body, OwnerUserId AS OwnerUserId, REPLACE(Title,'<.*?>','') AS Title, Tags AS Tags;
+
+STORE Main3 INTO '/pig/final.csv' USING PigStorage(',');
+
+#Hive
+CREATE TABLE test(Id int, Score float, Body varchar(50000), OwnerUserId int, Title varchar(500), Tags varchar(500)) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+
+describe formatted test;
+
+load data inpath '/pig/final.csv' overwrite into table test;
+
+********************************************************************************************************
+3.Using Hive and/or MapReduce, get: 
+
+I. The top 10 posts by score
+
+SELECT Id, Score from test order by Score desc limit 10;
+
+II. The top 10 users by post score
+
+SELECT OwnerUserId,Score FROM ( SELECT OwnerUserId,sum(score) as score FROM test GROUP BY OwnerUserId) test ORDER BY Score desc limit 10;
+
+III. The number of distinct users, who used the word “Hadoop” in one of their posts
+
+select count(DISTINCT OwnerUserId) from test where UPPER(Body) like UPPER('%hadoop%') or UPPER(Title) like UPPER('%hadoop%') or UPPER(Tags) like UPPER('%hadoop%');
+
+********************************************************************************************************
+4.Using Mapreducecalculate the per-user TF-IDF (just submit the top 10 terms for each of the top 10 users from Query 3.II)
+
+#storing required data for mapreduce
+INSERT OVERWRITE LOCAL DIRECTORY '/home/saumit_91/resone' ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' select OwnerUserId, concat_ws(".",collect_list(body)) body from test wh
+ere OwnerUserId = 87234 or OwnerUserId = 4883 or OwnerUserId = 9951 or OwnerUserId = 6068 or OwnerUserId = 89904 or OwnerUserId = 51816 or OwnerUserId = 49153 or Ow
+nerUserId = 95592 or OwnerUserId = 63051 or OwnerUserId = 39677 group by OwnerUserId;
+
+#after merging the files, removing comma as mapreduce program is coded that way and storing in pig directory
+sed 's/,/ /g' 000000_0 > resone
+
+hadoop fs -put resone /pig
+
+#Downloaded streaming jar file and ran the script for mapreduce phase one
+
+hadoop jar /home/saumit_91/hadoop-streaming-2.7.1.jar -file /home/saumit_91/MapperPhaseOne.py /home/saumit_91/ReducerPhaseOne.py -mapper "python MapperPhaseOne.py" -reducer "python ReducerPhaseOne.py" -input /pig/resone -output /pig/MR1result
+
+hadoop fs -rm /pig/MR1result/_SUCCESS
+
+hadoop fs -cat /pig/MR1result/* | hadoop fs -put - /pig/MR1out
+
+# script for mapreduce phase two
+
+hadoop jar /home/saumit_91/hadoop-streaming-2.7.1.jar -file /home/saumit_91/MapperPhaseTwo.py /home/saumit_91/ReducerPhaseTwo.py -mapper "python MapperPhaseTwo.py" -reducer "python ReducerPhaseTwo.py" -input /pig/MR1out -output /pig/MR2result
+
+hadoop fs -rm /pig/MR2result/_SUCCESS
+
+hadoop fs -cat /pig/MR2result/* | hadoop fs -put - /pig/MR2out
+
+# script for mapreduce phase three
+
+hadoop jar /home/saumit_91/hadoop-streaming-2.7.1.jar -file /home/saumit_91/MapperPhaseThree.py /home/saumit_91/ReducerPhaseThree.py -mapper "python MapperPhaseThree.py" -reducer "python ReducerPhaseThree.py" -input /pig/MR2out -output /pig/MR3result
+
+hadoop fs -rm /pig/MR3result/_SUCCESS
+
+hadoop fs -cat /pig/MR3result/* | hadoop fs -put - /pig/finalresult
+
+hadoop fs -copyToLocal /pig/finalresult /home/saumit_91/finalresult
+
+# putting comma to load in hive
+
+sed -e 's/\s/,/g' finalresult > finalresult1
+
+# Hive
+create table final(word string, owneruserid  int, tfidf double)row format delimited fields terminated by ',';
+
+load data local inpath '/home/saumit_91/finalresult1' overwrite into table final;
+
+# Using Mapreduce calculated the per user TF IDF
+select owneruserid, tfidf, word from final where owneruserid = 4883 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 6068 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 9951 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 39677 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 49153 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 51816 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 63051 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 87234 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 89904 order by tfidf desc limit 10;
+select owneruserid, tfidf, word from final where owneruserid = 95592 order by tfidf desc limit 10;
+
+Note: The mapreduce programs for TF-IDF are taken from https://github.com/SatishUC15/TFIDF-HadoopMapReduce#tfidf-hadoop. Few changes were made in MapperPhaseOne for adding stop words and print accordingly in order to get good results.
+
+
+
+
+
+
+
+
+
+
